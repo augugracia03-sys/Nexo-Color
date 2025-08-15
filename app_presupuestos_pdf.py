@@ -19,6 +19,25 @@ def limpiar_precio(valor):
         return 0
 
 
+def normalizar_precio_entero(valor):
+    try:
+        # First try string-based sanitize
+        if isinstance(valor, str):
+            return limpiar_precio(valor)
+        n = int(valor)
+    except Exception:
+        return limpiar_precio(valor)
+    # Keep reasonable ranges
+    if n <= 2_000_000:
+        return n
+    # Try reducing magnitude assuming concatenated decimals (2-5 digits)
+    for k in (5, 4, 3, 2):
+        m = n // (10 ** k)
+        if 100 <= m <= 2_000_000:
+            return m
+    return n
+
+
 # Ensure useful indexes exist for faster lookups if the columns are present
 @st.cache_resource(show_spinner=False)
 def ensure_db_indexes():
@@ -92,7 +111,7 @@ def cargar_productos():
     # Coerce numeric price-related columns to integers (no decimals)
     for col_num in ["precio", "costo"]:
         if col_num in df.columns:
-            df[col_num] = df[col_num].apply(limpiar_precio)
+            df[col_num] = df[col_num].apply(normalizar_precio_entero)
 
     # Precompute normalized columns once for faster repeated searches
     for base_col in ["codigo", "descripcion", "categoria"]:
@@ -351,7 +370,7 @@ def importar_productos_desde_excel(file_bytes: BytesIO) -> int:
     # Coerce numerics without decimals
     for col_num in ["precio", "costo"]:
         if col_num in df_out.columns:
-            df_out[col_num] = df_out[col_num].apply(limpiar_precio)
+            df_out[col_num] = df_out[col_num].apply(normalizar_precio_entero)
 
     # Write to DB (replace table)
     with sqlite3.connect(DB_PATH) as conn:
@@ -431,7 +450,7 @@ if not filt.empty and "descripcion" in filt.columns:
     with col2:
         cant_add = st.number_input("Cantidad", min_value=1, value=1, step=1, key="cant_db")
     with col3:
-        precio_add = st.number_input("Precio sugerido", value=limpiar_precio(fila["precio"]) if "precio" in fila else 0, step=1, key="precio_db")
+        precio_add = st.number_input("Precio sugerido", value=normalizar_precio_entero(fila["precio"]) if "precio" in fila else 0, step=1, key="precio_db")
 
     if st.button("➕ Agregar ítem desde base"):
         st.session_state["items"].append({
