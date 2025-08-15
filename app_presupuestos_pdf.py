@@ -113,6 +113,23 @@ def normalizar_precio_entero(valor):
     return n
 
 
+def normalizar_codigo(valor):
+    try:
+        if pd.isna(valor):
+            return ""
+    except Exception:
+        pass
+    if isinstance(valor, (int, float)):
+        try:
+            return str(int(round(float(valor))))
+        except Exception:
+            return str(valor)
+    s = str(valor).strip()
+    if s.endswith(".0"):
+        s = s[:-2]
+    return s
+
+
 # Ensure useful indexes exist for faster lookups if the columns are present
 @st.cache_resource(show_spinner=False)
 def ensure_db_indexes():
@@ -222,22 +239,22 @@ ensure_caja_schema()
 ensure_precios_costos_normalizados()
 
 
-@st.cache_data(show_spinner=False)
 def cargar_productos():
     with sqlite3.connect(DB_PATH) as conn:
         df = pd.read_sql_query("SELECT * FROM productos", conn)
-    cols = [c for c in [
+    # Keep only needed columns
+    keep_cols = [c for c in [
         "codigo",
         "descripcion",
-        "categoria",
-        "unidad",
         "costo",
         "precio",
         "margen_bruto",
-        "markup",
-        "margen_%",
     ] if c in df.columns]
-    df = df[cols].copy()
+    df = df[keep_cols].copy()
+
+    # Normalize codigo
+    if "codigo" in df.columns:
+        df["codigo"] = df["codigo"].apply(normalizar_codigo)
 
     # Coerce numeric price-related columns to integers (no decimals)
     for col_num in ["precio", "costo"]:
@@ -245,7 +262,7 @@ def cargar_productos():
             df[col_num] = df[col_num].apply(normalizar_precio_entero)
 
     # Precompute normalized columns once for faster repeated searches
-    for base_col in ["codigo", "descripcion", "categoria"]:
+    for base_col in ["codigo", "descripcion"]:
         if base_col in df.columns:
             df[f"__{base_col}_norm"] = df[base_col].fillna("").astype(str).str.lower()
 
@@ -258,7 +275,7 @@ def buscar_productos(df, query, categoria):
     if categoria and categoria != "Todas" and "categoria" in out.columns:
         out = out[out["categoria"].fillna("").astype(str) == categoria]
     if q:
-        norm_cols = [c for c in ["__codigo_norm", "__descripcion_norm", "__categoria_norm"] if c in out.columns]
+        norm_cols = [c for c in ["__codigo_norm", "__descripcion_norm"] if c in out.columns]
         if norm_cols:
             mask = pd.Series(False, index=out.index)
             for c in norm_cols:
@@ -554,15 +571,12 @@ with colx2:
         df_prod = cargar_productos()
 
 st.subheader("Buscar productos")
-col1, col2 = st.columns([3, 2])
+col1, = st.columns([1])
 with col1:
-    q = st.text_input("Texto (código, descripción, categoría)", "")
-with col2:
-    categorias = [
-        "Todas"
-    ] + (sorted(df_prod["categoria"].dropna().astype(str).unique()) if "categoria" in df_prod.columns else [])
-    cat = st.selectbox("Categoría", categorias, index=0)
+    q = st.text_input("Texto (código o descripción)", "")
 
+# Remove category filtering since column is dropped
+cat = None
 filt = buscar_productos(df_prod, q, cat)
 st.write(f"Resultados: {len(filt)}")
 st.dataframe(filt.head(500), use_container_width=True)
