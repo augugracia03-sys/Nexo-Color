@@ -89,6 +89,11 @@ def cargar_productos():
     ] if c in df.columns]
     df = df[cols].copy()
 
+    # Coerce numeric price-related columns to integers (no decimals)
+    for col_num in ["precio", "costo"]:
+        if col_num in df.columns:
+            df[col_num] = df[col_num].apply(limpiar_precio)
+
     # Precompute normalized columns once for faster repeated searches
     for base_col in ["codigo", "descripcion", "categoria"]:
         if base_col in df.columns:
@@ -297,6 +302,67 @@ def caja_consultar(desde: str, hasta: str):
     return df
 
 
+def exportar_productos_a_excel_bytes() -> BytesIO:
+    with sqlite3.connect(DB_PATH) as conn:
+        try:
+            df = pd.read_sql_query("SELECT * FROM productos", conn)
+        except Exception:
+            df = pd.DataFrame()
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="productos")
+    output.seek(0)
+    return output
+
+
+def importar_productos_desde_excel(file_bytes: BytesIO) -> int:
+    df_xl = pd.read_excel(file_bytes, engine="openpyxl")
+    # Normalize column names
+    df_xl.columns = [str(c).strip().lower() for c in df_xl.columns]
+    # Expected minimal columns
+    mapping = {
+        "codigo": ["codigo", "código", "cod"],
+        "descripcion": ["descripcion", "descripción", "desc"],
+        "categoria": ["categoria", "categoría"],
+        "unidad": ["unidad", "uni"],
+        "costo": ["costo", "coste"],
+        "precio": ["precio", "precio_venta", "pv"],
+        "margen_bruto": ["margen_bruto", "margen"],
+        "markup": ["markup"],
+        "margen_%": ["margen_%", "margen_porcentaje"],
+    }
+
+    def find_col(candidates):
+        for c in candidates:
+            if c in df_xl.columns:
+                return c
+        return None
+
+    out_cols = {}
+    for target, candidates in mapping.items():
+        col = find_col(candidates)
+        if col:
+            out_cols[target] = df_xl[col]
+        else:
+            out_cols[target] = pd.Series([None] * len(df_xl))
+
+    df_out = pd.DataFrame(out_cols)
+
+    # Coerce numerics without decimals
+    for col_num in ["precio", "costo"]:
+        if col_num in df_out.columns:
+            df_out[col_num] = df_out[col_num].apply(limpiar_precio)
+
+    # Write to DB (replace table)
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("DROP TABLE IF EXISTS productos")
+        conn.commit()
+        df_out.to_sql("productos", conn, if_exists="replace", index=False)
+        conn.commit()
+    return len(df_out)
+
+
 init_state()
 df_prod = cargar_productos()
 
@@ -316,6 +382,26 @@ with st.sidebar:
         else:
             pdf_data = exportar_a_pdf()
             st.download_button("Descargar Presupuesto.pdf", data=pdf_data, file_name="Presupuesto.pdf", mime="application/pdf")
+
+# ============== Productos (Excel) ==============
+st.subheader("Productos: Importar/Exportar Excel")
+colx1, colx2 = st.columns([1, 2])
+with colx1:
+    if st.button("Descargar Excel actual"):
+        xls = exportar_productos_a_excel_bytes()
+        st.download_button(
+            label="Descargar productos.xlsx",
+            data=xls,
+            file_name="productos.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+with colx2:
+    archivo_excel = st.file_uploader("Subir Excel (.xlsx) para reemplazar la lista", type=["xlsx"])
+    if archivo_excel is not None:
+        num = importar_productos_desde_excel(archivo_excel)
+        st.success(f"Se importaron {num} filas a 'productos'.")
+        st.cache_data.clear()
+        df_prod = cargar_productos()
 
 st.subheader("Buscar productos")
 col1, col2 = st.columns([3, 2])
