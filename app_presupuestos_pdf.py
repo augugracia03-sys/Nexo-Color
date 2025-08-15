@@ -105,61 +105,143 @@ def init_state():
 def exportar_a_pdf():
     # Lazy import heavy dependencies to improve initial page load time
     from reportlab.lib.pagesizes import A4
-    from reportlab.pdfgen import canvas
     from reportlab.lib import colors
-    from reportlab.platypus import Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT, TA_RIGHT
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    import os
 
     buffer = BytesIO()
-    c = canvas.Canvas(buffer, pagesize=A4)
-    width, height = A4
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=36,
+        rightMargin=36,
+        topMargin=36,
+        bottomMargin=36,
+    )
+    styles = getSampleStyleSheet()
 
-    # Encabezado
-    c.setFont("Helvetica-Bold", 16)
-    c.drawString(50, height - 50, "Presupuesto")
-    c.setFont("Helvetica", 10)
-    c.drawString(50, height - 70, f"Fecha: {st.session_state.fecha}")
-    c.drawString(200, height - 70, f"Cliente: {st.session_state.cliente}")
-    c.drawString(50, height - 85, f"Observaciones: {st.session_state.observaciones}")
+    # Try to register Unicode-capable fonts to properly render accents
+    def try_register_fonts():
+        candidates = [
+            ("DejaVuSans", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+            ("Arial", r"C:\\Windows\\Fonts\\arial.ttf", r"C:\\Windows\\Fonts\\arialbd.ttf"),
+            ("LiberationSans", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"),
+        ]
+        for name, regular, bold in candidates:
+            if os.path.exists(regular) and os.path.exists(bold):
+                try:
+                    pdfmetrics.registerFont(TTFont(name, regular))
+                    pdfmetrics.registerFont(TTFont(f"{name}-Bold", bold))
+                    return name, f"{name}-Bold"
+                except Exception:
+                    continue
+        return "Helvetica", "Helvetica-Bold"
 
-    # Tabla de ítems
-    data = [["Código", "Descripción", "Cantidad", "P. Unitario", "Subtotal"]]
+    base_font, base_font_bold = try_register_fonts()
+
+    # Custom styles
+    title_style = ParagraphStyle(
+        "TitleCustom",
+        parent=styles["Title"],
+        fontName=base_font_bold,
+        fontSize=18,
+        leading=22,
+        alignment=TA_LEFT,
+        textColor=colors.HexColor("#1f2937"),
+    )
+    label_style = ParagraphStyle(
+        "Label",
+        parent=styles["Normal"],
+        fontName=base_font_bold,
+        fontSize=10,
+        textColor=colors.HexColor("#374151"),
+    )
+    value_style = ParagraphStyle(
+        "Value",
+        parent=styles["Normal"],
+        fontName=base_font,
+        fontSize=10,
+        textColor=colors.HexColor("#111827"),
+    )
+    total_style = ParagraphStyle(
+        "Total",
+        parent=styles["Normal"],
+        fontName=base_font_bold,
+        fontSize=12,
+        alignment=TA_RIGHT,
+        textColor=colors.HexColor("#111827"),
+    )
+
+    def format_money(n):
+        try:
+            n = float(n)
+        except Exception:
+            n = 0
+        s = f"{int(round(n)):,}".replace(",", ".")
+        return f"${s}"
+
+    story = []
+    story.append(Paragraph("Presupuesto", title_style))
+    story.append(Spacer(1, 6))
+
+    # Details (Fecha, Cliente, Observaciones)
+    details_data = [
+        [Paragraph("Fecha:", label_style), Paragraph(str(st.session_state.fecha), value_style)],
+        [Paragraph("Cliente:", label_style), Paragraph(str(st.session_state.cliente), value_style)],
+    ]
+    if st.session_state.observaciones:
+        details_data.append([Paragraph("Observaciones:", label_style), Paragraph(str(st.session_state.observaciones), value_style)])
+    details_tbl = Table(details_data, colWidths=[doc.width * 0.18, doc.width * 0.82])
+    details_tbl.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    story.append(details_tbl)
+    story.append(Spacer(1, 12))
+
+    # Items table (without codes). Widen description column.
+    data = [["Descripción", "Cantidad", "P. Unitario", "Subtotal"]]
     total = 0
     for it in st.session_state["items"]:
         subtotal = it["cantidad"] * it["precio_unitario"]
         total += subtotal
         data.append([
-            it["codigo"],
-            it["descripcion"],
-            it["cantidad"],
-            f"${it['precio_unitario']:,}".replace(",", "."),
-            f"${subtotal:,}".replace(",", "."),
+            str(it["descripcion"]),
+            int(it["cantidad"]),
+            format_money(it["precio_unitario"]),
+            format_money(subtotal),
         ])
 
-    table = Table(data, colWidths=[60, 200, 60, 80, 80])
-    style = TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.black),
-        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-    ])
-    table.setStyle(style)
+    col_widths = [doc.width * 0.6, doc.width * 0.1, doc.width * 0.15, doc.width * 0.15]
 
-    table.wrapOn(c, width, height)
-    table.drawOn(c, 50, height - 300)
+    table = Table(data, colWidths=col_widths, repeatRows=1)
+    table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), base_font_bold),
+        ("FONTSIZE", (0, 0), (-1, 0), 10),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
+        ("ALIGN", (1, 1), (1, -1), "CENTER"),
+        ("ALIGN", (2, 1), (3, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.HexColor("#ffffff"), colors.HexColor("#f9fafb")]),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#e5e7eb")),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("FONTNAME", (0, 1), (0, -1), base_font),
+        ("FONTNAME", (1, 1), (-1, -1), base_font),
+    ]))
+    story.append(table)
 
-    # Total
-    c.setFont("Helvetica-Bold", 12)
-    c.drawString(
-        400,
-        height - 320 - (len(st.session_state["items"]) * 15),
-        f"TOTAL: ${total:,}".replace(",", "."),
-    )
+    story.append(Spacer(1, 12))
+    story.append(Paragraph(f"TOTAL: {format_money(total)}", total_style))
 
-    c.showPage()
-    c.save()
+    doc.build(story)
     buffer.seek(0)
     return buffer
 
