@@ -31,23 +31,61 @@ def limpiar_precio(valor):
         last_comma = s2.rfind(",")
         last_sep_idx = max(last_dot, last_comma)
         int_part = s2[:last_sep_idx]
+        digits_all = re.sub(r"[^0-9]", "", s2)
         int_digits = re.sub(r"[^0-9]", "", int_part)
+        # If overall digits look like cents x100 (too large), try downscale
+        try:
+            raw = int(digits_all)
+            if raw > 100_000:
+                scaled = raw // 100
+                if 100 <= scaled <= 2_000_000:
+                    return scaled
+        except Exception:
+            pass
         return int(int_digits) if int_digits else 0
     # Only one kind of separator
     if has_dot or has_comma:
         sep = "." if has_dot else ","
         last_sep_idx = s2.rfind(sep)
         right_len = len(s2) - last_sep_idx - 1
+        digits_all = re.sub(r"[^0-9]", "", s2)
         # If looks like decimals (1-2 digits), drop them
         if right_len in (1, 2):
             int_part = s2[:last_sep_idx]
             int_digits = re.sub(r"[^0-9]", "", int_part)
+            # Also check for cents-scaled downscale
+            try:
+                raw = int(digits_all)
+                if raw > 100_000:
+                    scaled = raw // 100
+                    if 100 <= scaled <= 2_000_000:
+                        return scaled
+            except Exception:
+                pass
             return int(int_digits) if int_digits else 0
         # Otherwise treat as thousands separators: remove all
         digits = re.sub(r"[^0-9]", "", s2)
+        # If digits still too large, try x100 downscale
+        try:
+            raw = int(digits)
+            if raw > 100_000:
+                scaled = raw // 100
+                if 100 <= scaled <= 2_000_000:
+                    return scaled
+        except Exception:
+            pass
         return int(digits) if digits else 0
     # No separators, digits only
     digits = re.sub(r"[^0-9]", "", s2)
+    # If digits too large, try downscale
+    try:
+        raw = int(digits or 0)
+        if raw > 100_000:
+            scaled = raw // 100
+            if 100 <= scaled <= 2_000_000:
+                return scaled
+    except Exception:
+        pass
     return int(digits) if digits else 0
 
 
@@ -495,7 +533,7 @@ if not filt.empty and "descripcion" in filt.columns:
             "descripcion": str(fila["descripcion"]) if "descripcion" in fila else "",
             "cantidad": cant_add,
             "precio_unitario": precio_add,
-            "costo_unitario": int(fila["costo"]) if "costo" in fila else 0,
+            "costo_unitario": normalizar_precio_entero(fila["costo"]) if "costo" in fila else 0,
         })
 
 # Agregar ítem personalizado
