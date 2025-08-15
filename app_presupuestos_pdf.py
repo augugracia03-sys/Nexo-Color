@@ -4,8 +4,9 @@ import pandas as pd
 import sqlite3
 from datetime import datetime
 from io import BytesIO
+import os
 
-DB_PATH = "presupuestos.db"
+DB_PATH = os.path.join(os.path.dirname(__file__), "presupuestos.db")
 
 
 def limpiar_precio(valor):
@@ -464,7 +465,7 @@ def calcular_totales_desde_widgets() -> tuple[int, int]:
     for i, it in enumerate(items):
         qty = st.session_state.get(f"cant_{i}", it.get("cantidad", 0)) or 0
         price = st.session_state.get(f"precio_{i}", it.get("precio_unitario", 0)) or 0
-        costo_unit = it.get("costo_unitario", 0) or 0
+        costo_unit = st.session_state.get(f"costo_{i}", it.get("costo_unitario", 0)) or 0
         try:
             qty = int(qty)
         except Exception:
@@ -641,7 +642,7 @@ if not filt.empty and "descripcion" in filt.columns:
 
 # Agregar ítem personalizado
 st.markdown("### Agregar ítem personalizado")
-col1, col2, col3, col4 = st.columns([2, 4, 2, 2])
+col1, col2, col3, col4, col5 = st.columns([2, 4, 2, 2, 2])
 with col1:
     cod_pers = st.text_input("Código", key="codigo_pers")
 with col2:
@@ -650,6 +651,8 @@ with col3:
     cant_pers = st.number_input("Cantidad", min_value=1, value=1, step=1, key="cant_pers")
 with col4:
     precio_pers = st.number_input("Precio unitario", min_value=0, value=0, step=1, key="precio_pers")
+with col5:
+    costo_pers = st.number_input("Costo unitario", min_value=0, value=0, step=1, key="costo_pers")
 
 if st.button("➕ Agregar ítem personalizado"):
     st.session_state["items"].append({
@@ -657,6 +660,7 @@ if st.button("➕ Agregar ítem personalizado"):
         "descripcion": desc_pers,
         "cantidad": cant_pers,
         "precio_unitario": precio_pers,
+        "costo_unitario": costo_pers,
     })
 
 # Lista de ítems
@@ -666,7 +670,7 @@ if not st.session_state["items"]:
 else:
     to_delete = None
     for i, it in enumerate(st.session_state["items"]):
-        c1, c2, c3, c4, c5 = st.columns([2, 2, 5, 2, 1])
+        c1, c2, c3, c4, c5, c6 = st.columns([2, 2, 4, 2, 2, 1])
         with c1:
             st.session_state["items"][i]["cantidad"] = st.number_input("Cantidad", min_value=0, value=int(it["cantidad"]), step=1, key=f"cant_{i}")
         with c2:
@@ -676,6 +680,8 @@ else:
         with c4:
             st.session_state["items"][i]["precio_unitario"] = st.number_input("Precio unitario", min_value=0, value=int(it["precio_unitario"]), step=1, key=f"precio_{i}")
         with c5:
+            st.session_state["items"][i]["costo_unitario"] = st.number_input("Costo unitario", min_value=0, value=int(it.get("costo_unitario", 0)), step=1, key=f"costo_{i}")
+        with c6:
             if st.button("🗑️", key=f"del_{i}"):
                 to_delete = i
 
