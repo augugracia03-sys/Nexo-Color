@@ -595,7 +595,7 @@ if not filt.empty and "descripcion" in filt.columns:
     with col2:
         cant_add = st.number_input("Cantidad", min_value=1, value=1, step=1, key="cant_db")
     with col3:
-        precio_add = st.number_input("Precio sugerido", value=normalizar_precio_entero(fila["precio"]) if "precio" in fila else 0, step=1, key="precio_db")
+        precio_add = st.number_input("Precio sugerido", value=int(fila["precio"]) if "precio" in fila else 0, step=1, key="precio_db")
 
     if st.button("➕ Agregar ítem desde base"):
         st.session_state["items"].append({
@@ -603,7 +603,7 @@ if not filt.empty and "descripcion" in filt.columns:
             "descripcion": str(fila["descripcion"]) if "descripcion" in fila else "",
             "cantidad": cant_add,
             "precio_unitario": precio_add,
-            "costo_unitario": normalizar_precio_entero(fila["costo"]) if "costo" in fila else 0,
+            "costo_unitario": int(fila["costo"]) if "costo" in fila else 0,
         })
 
 # Agregar ítem personalizado
