@@ -9,28 +9,65 @@ DB_PATH = "presupuestos.db"
 
 
 def limpiar_precio(valor):
-    if pd.isna(valor):
+    import re
+    # Accept int/float directly
+    if isinstance(valor, (int, float)):
+        try:
+            return int(round(float(valor)))
+        except Exception:
+            return 0
+    s = str(valor or "")
+    if not s:
         return 0
-    if isinstance(valor, str):
-        valor = valor.replace(".", "").replace(",", ".")
-    try:
-        return int(round(float(valor)))
-    except:
+    # Keep only digits and separators
+    s2 = re.sub(r"[^0-9.,]", "", s)
+    if not s2:
         return 0
+    has_dot = "." in s2
+    has_comma = "," in s2
+    # Both separators: last separator is decimal, drop decimals
+    if has_dot and has_comma:
+        last_dot = s2.rfind(".")
+        last_comma = s2.rfind(",")
+        last_sep_idx = max(last_dot, last_comma)
+        int_part = s2[:last_sep_idx]
+        int_digits = re.sub(r"[^0-9]", "", int_part)
+        return int(int_digits) if int_digits else 0
+    # Only one kind of separator
+    if has_dot or has_comma:
+        sep = "." if has_dot else ","
+        last_sep_idx = s2.rfind(sep)
+        right_len = len(s2) - last_sep_idx - 1
+        # If looks like decimals (1-2 digits), drop them
+        if right_len in (1, 2):
+            int_part = s2[:last_sep_idx]
+            int_digits = re.sub(r"[^0-9]", "", int_part)
+            return int(int_digits) if int_digits else 0
+        # Otherwise treat as thousands separators: remove all
+        digits = re.sub(r"[^0-9]", "", s2)
+        return int(digits) if digits else 0
+    # No separators, digits only
+    digits = re.sub(r"[^0-9]", "", s2)
+    return int(digits) if digits else 0
 
 
 def normalizar_precio_entero(valor):
     try:
-        # First try string-based sanitize
+        # First try string-based sanitize for strings
         if isinstance(valor, str):
             return limpiar_precio(valor)
         n = int(valor)
     except Exception:
         return limpiar_precio(valor)
+    # Heuristic: many sources store cents by scaling x100 (e.g., 4230.32 -> 423032)
+    if n > 100_000:
+        scaled = n // 100
+        if 100 <= scaled <= 2_000_000:
+            return scaled
     # Keep reasonable ranges
     if n <= 2_000_000:
         return n
-    # Try reducing magnitude assuming concatenated decimals (2-5 digits)
+    # Try reducing magnitude assuming concatenated decimals or extra zeros (2-5 digits)
     for k in (5, 4, 3, 2):
         m = n // (10 ** k)
         if 100 <= m <= 2_000_000:
@@ -458,6 +495,7 @@ if not filt.empty and "descripcion" in filt.columns:
             "descripcion": str(fila["descripcion"]) if "descripcion" in fila else "",
             "cantidad": cant_add,
             "precio_unitario": precio_add,
+            "costo_unitario": int(fila["costo"]) if "costo" in fila else 0,
         })
 
 # Agregar ítem personalizado
@@ -505,6 +543,20 @@ else:
 
     total = calcular_totales(st.session_state["items"])
     st.markdown(f"### Total: **${int(total):,}**".replace(",", "."))
+
+    # Totals: cost, profit, margin (UI only)
+    costo_total = 0
+    for it in st.session_state["items"]:
+        qty = int(it.get("cantidad", 0) or 0)
+        costo_unit = int(it.get("costo_unitario", 0) or 0)
+        costo_total += qty * costo_unit
+    ganancia_total = max(total - costo_total, 0)
+    margen_pct = (ganancia_total / total * 100.0) if total else 0.0
+    st.caption(
+        f"Costo: {formatear_dinero(costo_total)} | "
+        f"Ganancia: {formatear_dinero(ganancia_total)} | "
+        f"Margen: {margen_pct:.1f}%"
+    )
 
 
 @st.cache_data(show_spinner=False)
