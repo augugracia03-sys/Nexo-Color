@@ -215,7 +215,7 @@ def ensure_precios_costos_normalizados():
                         updates_precio.append((new_v, rowid))
                 if has_costo:
                     v = r[idx] if len(r) > idx else None
-                    new_v = normalizar_precio_entero(v)
+                    new_v = limpiar_precio(v)
                     try:
                         old_int = int(v) if v is not None else None
                     except Exception:
@@ -259,7 +259,7 @@ def cargar_productos():
     # Coerce numeric price-related columns to integers (no decimals)
     for col_num in ["precio", "costo"]:
         if col_num in df.columns:
-            df[col_num] = df[col_num].apply(normalizar_precio_entero)
+            df[col_num] = df[col_num].apply(limpiar_precio)
 
     # Precompute normalized columns once for faster repeated searches
     for base_col in ["codigo", "descripcion"]:
@@ -518,7 +518,7 @@ def importar_productos_desde_excel(file_bytes: BytesIO) -> int:
     # Coerce numerics without decimals
     for col_num in ["precio", "costo"]:
         if col_num in df_out.columns:
-            df_out[col_num] = df_out[col_num].apply(normalizar_precio_entero)
+            df_out[col_num] = df_out[col_num].apply(limpiar_precio)
 
     # Write to DB (replace table)
     with sqlite3.connect(DB_PATH) as conn:
