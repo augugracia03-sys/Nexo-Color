@@ -457,6 +457,31 @@ def calcular_totales(items):
     return sum(it["cantidad"] * it["precio_unitario"] for it in items)
 
 
+def calcular_totales_desde_widgets() -> tuple[int, int]:
+    total = 0
+    costo_total = 0
+    items = st.session_state.get("items", [])
+    for i, it in enumerate(items):
+        qty = st.session_state.get(f"cant_{i}", it.get("cantidad", 0)) or 0
+        price = st.session_state.get(f"precio_{i}", it.get("precio_unitario", 0)) or 0
+        costo_unit = it.get("costo_unitario", 0) or 0
+        try:
+            qty = int(qty)
+        except Exception:
+            qty = 0
+        try:
+            price = int(price)
+        except Exception:
+            price = 0
+        try:
+            costo_unit = int(costo_unit)
+        except Exception:
+            costo_unit = 0
+        total += qty * price
+        costo_total += qty * costo_unit
+    return total, costo_total
+
+
 def caja_insertar(fecha: str, tipo: str, movimiento: str, concepto: str, monto: float):
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
@@ -657,15 +682,15 @@ else:
     if to_delete is not None:
         st.session_state["items"].pop(to_delete)
 
-    total = calcular_totales(st.session_state["items"])
+    total, costo_total = calcular_totales_desde_widgets()
     st.markdown(f"### Total: **${int(total):,}**".replace(",", "."))
 
     # Totals: cost, profit, margin (UI only)
-    costo_total = 0
-    for it in st.session_state["items"]:
-        qty = int(it.get("cantidad", 0) or 0)
-        costo_unit = int(it.get("costo_unitario", 0) or 0)
-        costo_total += qty * costo_unit
+    # costo_total = 0
+    # for it in st.session_state["items"]:
+    #     qty = int(it.get("cantidad", 0) or 0)
+    #     costo_unit = int(it.get("costo_unitario", 0) or 0)
+    #     costo_total += qty * costo_unit
     ganancia_total = max(total - costo_total, 0)
     margen_pct = (ganancia_total / total * 100.0) if total else 0.0
     st.caption(
