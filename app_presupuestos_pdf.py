@@ -130,6 +130,14 @@ def normalizar_codigo(valor):
     return s
 
 
+def formatear_dinero(valor):
+    try:
+        n = float(valor)
+    except Exception:
+        n = 0.0
+    return f"${int(round(n)):,}".replace(",", ".")
+
+
 # Ensure useful indexes exist for faster lookups if the columns are present
 @st.cache_resource(show_spinner=False)
 def ensure_db_indexes():
