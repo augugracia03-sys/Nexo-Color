@@ -160,10 +160,66 @@ def ensure_caja_schema():
     return True
 
 
+@st.cache_resource(show_spinner=False)
+def ensure_precios_costos_normalizados():
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            info = pd.read_sql_query("PRAGMA table_info(productos)", conn)
+            if info.empty:
+                return True
+            cols = set(info["name"].astype(str))
+            has_precio = "precio" in cols
+            has_costo = "costo" in cols
+            if not (has_precio or has_costo):
+                return True
+            select_cols = []
+            if has_precio:
+                select_cols.append("precio")
+            if has_costo:
+                select_cols.append("costo")
+            # Use rowid for updates
+            sql = f"SELECT rowid, {', '.join(select_cols)} FROM productos"
+            cur = conn.cursor()
+            rows = cur.execute(sql).fetchall()
+            updates_precio = []
+            updates_costo = []
+            for r in rows:
+                rowid = r[0]
+                idx = 1
+                if has_precio:
+                    v = r[idx]
+                    idx += 1
+                    new_v = normalizar_precio_entero(v)
+                    try:
+                        old_int = int(v) if v is not None else None
+                    except Exception:
+                        old_int = None
+                    if old_int is None or new_v != old_int:
+                        updates_precio.append((new_v, rowid))
+                if has_costo:
+                    v = r[idx] if len(r) > idx else None
+                    new_v = normalizar_precio_entero(v)
+                    try:
+                        old_int = int(v) if v is not None else None
+                    except Exception:
+                        old_int = None
+                    if old_int is None or new_v != old_int:
+                        updates_costo.append((new_v, rowid))
+            if updates_precio:
+                cur.executemany("UPDATE productos SET precio = ? WHERE rowid = ?", updates_precio)
+            if updates_costo:
+                cur.executemany("UPDATE productos SET costo = ? WHERE rowid = ?", updates_costo)
+            conn.commit()
+    except Exception:
+        pass
+    return True
+
+
 st.set_page_config(page_title="Presupuestos & Costos", layout="wide")
 # Run once per session
 ensure_db_indexes()
 ensure_caja_schema()
+ensure_precios_costos_normalizados()
 
 
 @st.cache_data(show_spinner=False)
