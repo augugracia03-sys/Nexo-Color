@@ -40,9 +40,36 @@ def ensure_db_indexes():
     return True
 
 
+@st.cache_resource(show_spinner=False)
+def ensure_caja_schema():
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS caja_movimientos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    fecha TEXT NOT NULL,
+                    tipo TEXT NOT NULL CHECK(tipo IN ('Efectivo','Transferencia')),
+                    movimiento TEXT NOT NULL CHECK(movimiento IN ('Ingreso','Egreso')),
+                    concepto TEXT,
+                    monto REAL NOT NULL DEFAULT 0
+                )
+                """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_caja_fecha ON caja_movimientos(fecha)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_caja_tipo ON caja_movimientos(tipo)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_caja_mov ON caja_movimientos(movimiento)")
+            conn.commit()
+    except Exception:
+        pass
+    return True
+
+
 st.set_page_config(page_title="Presupuestos & Costos", layout="wide")
 # Run once per session
 ensure_db_indexes()
+ensure_caja_schema()
 
 
 @st.cache_data(show_spinner=False)
@@ -250,6 +277,26 @@ def calcular_totales(items):
     return sum(it["cantidad"] * it["precio_unitario"] for it in items)
 
 
+def caja_insertar(fecha: str, tipo: str, movimiento: str, concepto: str, monto: float):
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO caja_movimientos (fecha, tipo, movimiento, concepto, monto) VALUES (?, ?, ?, ?, ?)",
+            (fecha, tipo, movimiento, concepto, float(monto) if monto is not None else 0.0),
+        )
+        conn.commit()
+
+
+def caja_consultar(desde: str, hasta: str):
+    query = (
+        "SELECT fecha, tipo, movimiento, concepto, monto FROM caja_movimientos "
+        "WHERE date(fecha) BETWEEN date(?) AND date(?) ORDER BY fecha ASC, id ASC"
+    )
+    with sqlite3.connect(DB_PATH) as conn:
+        df = pd.read_sql_query(query, conn, params=[desde, hasta])
+    return df
+
+
 init_state()
 df_prod = cargar_productos()
 
@@ -353,3 +400,82 @@ else:
 
     total = calcular_totales(st.session_state["items"])
     st.markdown(f"### Total: **${int(total):,}**".replace(",", "."))
+
+
+@st.cache_data(show_spinner=False)
+def _today_str():
+    return datetime.today().date().isoformat()
+
+
+def formatear_dinero(valor):
+    try:
+        n = float(valor)
+    except Exception:
+        n = 0.0
+    return f"${int(round(n)):,}".replace(",", ".")
+
+# ============== CAJA ==============
+st.markdown("---")
+st.header("Caja")
+
+colf1, colf2 = st.columns(2)
+with colf1:
+    fecha_mov = st.date_input("Fecha del movimiento", value=pd.to_datetime(_today_str()))
+with colf2:
+    tipo_pago = st.selectbox("Tipo de pago", ["Efectivo", "Transferencia"])
+
+colf3, colf4, colf5 = st.columns([2, 4, 2])
+with colf3:
+    tipo_mov = st.selectbox("Movimiento", ["Ingreso", "Egreso"])
+with colf4:
+    concepto = st.text_input("Concepto")
+with colf5:
+    monto = st.number_input("Monto", min_value=0, value=0, step=1)
+
+if st.button("Registrar movimiento"):
+    caja_insertar(
+        fecha_mov.strftime("%Y-%m-%d"),
+        tipo_pago,
+        tipo_mov,
+        concepto,
+        monto,
+    )
+    st.success("Movimiento registrado en caja")
+    st.cache_data.clear()
+
+st.subheader("Consulta de caja")
+colr1, colr2 = st.columns(2)
+with colr1:
+    desde = st.date_input("Desde", value=pd.to_datetime(_today_str()))
+with colr2:
+    hasta = st.date_input("Hasta", value=pd.to_datetime(_today_str()))
+
+if desde > hasta:
+    st.warning("La fecha 'Desde' no puede ser mayor que 'Hasta'.")
+else:
+    df_caja = caja_consultar(desde.strftime("%Y-%m-%d"), hasta.strftime("%Y-%m-%d"))
+    if not df_caja.empty:
+        # Totals
+        ingreso_efectivo = df_caja[(df_caja["movimiento"] == "Ingreso") & (df_caja["tipo"] == "Efectivo")]["monto"].sum()
+        ingreso_transf = df_caja[(df_caja["movimiento"] == "Ingreso") & (df_caja["tipo"] == "Transferencia")]["monto"].sum()
+        egreso_efectivo = df_caja[(df_caja["movimiento"] == "Egreso") & (df_caja["tipo"] == "Efectivo")]["monto"].sum()
+        egreso_transf = df_caja[(df_caja["movimiento"] == "Egreso") & (df_caja["tipo"] == "Transferencia")]["monto"].sum()
+        total_efectivo = ingreso_efectivo - egreso_efectivo
+        total_transf = ingreso_transf - egreso_transf
+        total_general = (ingreso_efectivo + ingreso_transf) - (egreso_efectivo + egreso_transf)
+
+        st.write(
+            f"Ingresos (Efectivo): {formatear_dinero(ingreso_efectivo)} | "
+            f"Ingresos (Transferencia): {formatear_dinero(ingreso_transf)} | "
+            f"Egresos (Efectivo): {formatear_dinero(egreso_efectivo)} | "
+            f"Egresos (Transferencia): {formatear_dinero(egreso_transf)}"
+        )
+        st.write(
+            f"Total Efectivo: {formatear_dinero(total_efectivo)} | "
+            f"Total Transferencias: {formatear_dinero(total_transf)} | "
+            f"Total General: {formatear_dinero(total_general)}"
+        )
+
+        st.dataframe(df_caja, use_container_width=True)
+    else:
+        st.info("No hay movimientos en el período seleccionado.")
